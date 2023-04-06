@@ -1,0 +1,121 @@
+name: Deploy to AWS Elastic Beanstalk
+
+on:
+  push:
+    tags:
+      - '*'
+
+env:
+  SECRET: ${{ secrets.SECRET }}
+  EB_BUCKET_NAME: ${{ secrets.EB_BUCKET_NAME }}
+  EB_ENVIRONMENT_NAME: ${{ secrets.EB_ENVIRONMENT_NAME }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID_DEVOPS }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEVOPS }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v2
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v2
+      with:
+        node-version: 16
+
+    - name: Install dependencies and test
+      run: |
+        npm ci
+        npm test
+
+    - name: Package application
+      run: |
+        VERSION_TAG=$(git describe --tags)
+        ZIP_FILE="bundle-$VERSION_TAG.zip"
+        zip -r $ZIP_FILE . -x '*.git*' 'node_modules/*' '*.npmignore'
+
+    - name: Get latest tag
+      run: echo "LATEST_TAG=$(git describe --tags --abbrev=0)" >> $GITHUB_ENV
+
+    
+
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v1
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID_DEVOPS }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY_DEVOPS }}
+        aws-region: ${{ secrets.EB_REGION }}
+
+    - name: Install and configure AWS Elastic Beanstalk CLI
+      run: |
+        if command -v aws &> /dev/null; then
+          echo "Removing existing AWS CLI installation..."
+          sudo rm -rf /usr/local/aws-cli
+        fi
+        echo "Installing the latest AWS CLI..."
+        curl -fsSL https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o awscliv2.zip
+        unzip awscliv2.zip
+        ./aws/install --bin-dir ~/.local/bin --install-dir ~/.local/aws-cli --update
+        rm -rf awscliv2.zip aws
+        echo 'export PATH=$HOME/.local/bin:$PATH' >> $GITHUB_ENV
+        echo 'export PATH=~/.ebcli-virtual-env/executables:$PATH' >> ~/.bash_profile && source ~/.bash_profile
+        pip install --upgrade --user awsebcli
+
+
+
+    - name: Deploy to Elastic Beanstalk
+      run: |
+        APP_NAME="${{ secrets.EB_APP_NAME }}"
+        VERSION_TAG=$(git describe --tags)
+        ZIP_FILE="bundle-$VERSION_TAG.zip"
+        EB_ENV_NAME="${{ secrets.EB_ENVIRONMENT_NAME }}"
+        S3_BUCKET="${{ secrets.EB_BUCKET_NAME }}"
+        aws s3 cp "./$ZIP_FILE" "s3://$S3_BUCKET/$ZIP_FILE"
+        aws elasticbeanstalk create-application-version --application-name $APP_NAME --version-label $VERSION_TAG --source-bundle S3Bucket=$S3_BUCKET,S3Key=$ZIP_FILE --region ${{ secrets.EB_REGION }}
+        eb init $APP_NAME --platform "Node.js" --region ${{ secrets.EB_REGION }}
+        eb deploy $EB_ENV_NAME --version $VERSION_TAG
+       
+
+    - name: Update latest tag badge
+      run: |
+        VERSION_TAG=$(git describe --tags)
+        curl -f -X POST "https://badges.yolziii.dev/yolziii/chatgpt-badges-holder/latest-tag?secret=$SECRET" \
+        -H "Content-Type: application/json" \
+        -d "{\"badge\": {\"schemaVersion\": 1, \"label\": \"production build tag\", \"message\": \"$LATEST_TAG\", \"color\": \"blueviolet\"}}"
+      env:
+        SECRET: ${{ secrets.SECRET }}
+
+    - name: Run coverage
+      run: |
+        npm run coverage
+
+    - name: Update coverage badge
+      if: always()
+      run: |
+        COVERAGE=$(npx nyc report --reporter=text-summary | awk '{print $3}' | awk 'NR==3{sub(/%$/,"",$0);print}')
+        if (( $(echo "$COVERAGE >= 100" | bc -l) )); then
+          COLOR="blue"
+        elif (( $(echo "$COVERAGE >= 98" | bc -l) )); then
+          COLOR="brightgreen"
+        elif (( $(echo "$COVERAGE >= 95" | bc -l) )); then
+          COLOR="green"
+        elif (( $(echo "$COVERAGE >= 90" | bc -l) )); then
+          COLOR="yellowgreen"
+        elif (( $(echo "$COVERAGE >= 85" | bc -l) )); then
+          COLOR="yellow"
+        elif (( $(echo "$COVERAGE >= 80" | bc -l) )); then
+          COLOR="orange"
+        else
+          COLOR="red"
+        fi
+        JSON_PAYLOAD=$(printf '{"badge": {"schemaVersion": 1, "label": "build coverage", "message": "%s%%", "color": "%s"}}' "$COVERAGE" "$COLOR")
+        echo "COVERAGE: $COVERAGE"
+        echo "COLOR: $COLOR"
+        echo "JSON_PAYLOAD: $JSON_PAYLOAD"
+        curl -f -X POST "https://badges.yolziii.dev/yolziii/chatgpt-badges-holder/coverage?secret=${{ secrets.SECRET }}" \
+        -H "Content-Type: application/json" \
+        -d "$JSON_PAYLOAD"
+      env:
+        SECRET: ${{ secrets.SECRET }}

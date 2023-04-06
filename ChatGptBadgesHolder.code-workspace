@@ -1,0 +1,16 @@
+{
+	"folders": [
+		{
+			"path": "."
+		}
+	],
+	"settings": {
+		"coverage-gutters.coverageFileNames": ["./coverage/lcov.info"],
+		"coverage-gutters.coverageDir": "./"
+	},
+	"extensions": {
+		"recommendations": [
+			"ryanluker.vscode-coverage-gutters"
+		]
+	}
+}

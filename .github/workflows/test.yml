@@ -1,0 +1,44 @@
+name: Test
+
+on:
+  push:
+    branches: [ main ]
+
+env:
+  SECRET: ${{ secrets.SECRET }}
+  EB_BUCKET_NAME: ${{ secrets.EB_BUCKET_NAME }}
+  EB_ENVIRONMENT_NAME: ${{ secrets.EB_ENVIRONMENT_NAME }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v2
+        with:
+          node-version: '14.x'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Run tests
+        id: run_tests
+        run: |
+          npm run test
+          echo "TEST_EXIT_CODE=$?" >> $GITHUB_ENV
+
+      - name: Update test results badge
+        if: always()
+        run: |
+          TEST_RESULT=$(if [ "$TEST_EXIT_CODE" -eq 0 ]; then echo "passing"; else echo "failing"; fi)
+          curl -f -X POST "https://badges.yolziii.dev/yolziii/chatgpt-badges-holder/test-results?secret=$SECRET" \
+          -H "Content-Type: application/json" \
+          -d "{\"badge\": {\"schemaVersion\": 1, \"label\": \"tests\", \"message\": \"$TEST_RESULT\", \"color\": \"$(if [ $TEST_RESULT = 'passing' ]; then echo 'brightgreen'; else echo 'red'; fi)\"}}"
+        env:
+          SECRET: ${{ secrets.SECRET }}
+
