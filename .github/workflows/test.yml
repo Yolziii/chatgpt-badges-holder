@@ -27,7 +27,6 @@ jobs:
         run: npm install
 
       - name: Run tests
-        id: run_tests
         run: |
           npm run test
           echo "TEST_EXIT_CODE=$?" >> $GITHUB_ENV
